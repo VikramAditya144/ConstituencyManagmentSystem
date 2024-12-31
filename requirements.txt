@@ -4,3 +4,4 @@ pdfkit
 reportlab
 jinja2
 fpdf
+pymongo
