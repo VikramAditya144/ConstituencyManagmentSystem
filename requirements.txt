@@ -1,0 +1,7 @@
+streamlit 
+pandas 
+sqlite3
+pdfkit 
+reportlab
+jinja2
+fpdf
