@@ -1,14 +1,15 @@
 import streamlit as st
 import pandas as pd
+import time
 from pymongo import MongoClient
 from datetime import datetime
 from bson import ObjectId
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-from io import BytesIO
 from reportlab.lib.pagesizes import letter, landscape
-
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+from io import BytesIO
 
 st.set_page_config(page_title="Mohiuddin Nagar Constituency (137)", layout="wide")
 
@@ -33,12 +34,7 @@ PANCHAYATS_DATA = {
 }
 
 BLOCKS = list(PANCHAYATS_DATA.keys())[1:]
-
-# Create a combined list of all panchayats
-ALL_PANCHAYATS = []
-for panchayats in PANCHAYATS_DATA.values():
-    ALL_PANCHAYATS.extend(panchayats)
-ALL_PANCHAYATS = sorted(list(set(ALL_PANCHAYATS)))
+ALL_PANCHAYATS = sorted(list(set([p for panchayats in PANCHAYATS_DATA.values() for p in panchayats])))
 
 @st.cache_resource
 def init_db():
@@ -89,8 +85,94 @@ def delete_record(record_id):
             st.error(f"Error deleting record: {e}")
     return False
 
-
-
+def export_to_pdf(df):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        leftMargin=15,
+        rightMargin=15,
+        topMargin=25,
+        bottomMargin=25
+    )
+    elements = []
+    
+    # Create custom styles for each column
+    styles = getSampleStyleSheet()
+    
+    # Custom style for cells with strict width control
+    cell_style = ParagraphStyle(
+        'CustomCell',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=12,
+        alignment=TA_LEFT,
+        wordWrap='CJK',  # Strict word wrap
+        splitLongWords=1  # Force split long words
+    )
+    
+    # Define header style
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.whitesmoke,
+        fontName='Helvetica-Bold'
+    )
+    
+    # Define the header row
+    headers = [
+        Paragraph('Name', header_style),
+        Paragraph('Block', header_style),
+        Paragraph('Panchayat', header_style),
+        Paragraph('Designation', header_style),
+        Paragraph('Mobile', header_style),
+        Paragraph('Address', header_style)
+    ]
+    data = [headers]
+    
+    # Process data rows with strict width control
+    for _, row in df.iterrows():
+        data.append([
+            Paragraph(str(row['name']).strip() or '-', cell_style),
+            Paragraph(str(row['block']).strip() or '-', cell_style),
+            Paragraph(str(row['panchayat']).strip() or '-', cell_style),
+            Paragraph(str(row['designation']).strip() or '-', cell_style),
+            Paragraph(str(row['mobile_number']).strip() or '-', cell_style),
+            Paragraph(str(row['address']).strip() or '-', cell_style)
+        ])
+    
+    # Fixed column widths (total = 762)
+    col_widths = [110, 110, 110, 90, 82, 260]
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    
+    style = TableStyle([
+        # Grid
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.grey),
+        
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.2, 0.2, 0.2)),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        
+        # Padding
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        
+        # Alignment
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        
+        # Row colors
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.Color(0.95, 0.95, 0.95), colors.white])
+    ])
+    
+    table.setStyle(style)
+    elements.append(table)
+    doc.build(elements)
+    
+    return buffer.getvalue()
 
 def data_entry_form(existing_data=None):
     existing_data = {} if existing_data is None else existing_data.to_dict() if hasattr(existing_data, 'to_dict') else existing_data
@@ -99,10 +181,7 @@ def data_entry_form(existing_data=None):
         col1, col2 = st.columns(2)
         
         with col1:
-            vidhan_sabha = st.text_input(
-                "Vidhan Sabha",
-                value="Mohiuddin Nagar"
-            )
+            vidhan_sabha = st.text_input("Vidhan Sabha", value="Mohiuddin Nagar")
             selected_block = st.selectbox(
                 "Block",
                 ["Select Block"] + BLOCKS,
@@ -151,59 +230,46 @@ def data_entry_form(existing_data=None):
             }
             
             record_id = existing_data.get('id') if existing_data else None
-            if add_or_update_data(data, record_id):
-                st.success(f"Data {'updated' if existing_data else 'submitted'} successfully!")
-                return True
+            
+            with st.spinner('Processing...'):
+                if add_or_update_data(data, record_id):
+                    st.balloons()
+                    st.success(f"✅ Data {'updated' if existing_data else 'submitted'} successfully!")
+                    time.sleep(1)
+                    return True
     
     return False
-
-
-def export_to_pdf(df):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), leftMargin=20, rightMargin=20)
-    elements = []
-    
-    data = [['Name', 'Block', 'Panchayat', 'Designation', 'Mobile', 'Address']]
-    for _, row in df.iterrows():
-        data.append([
-            str(row['name']),
-            str(row['block']),
-            str(row['panchayat']),
-            str(row['designation']),
-            str(row['mobile_number']),
-            str(row['address'])
-        ])
-    
-    col_widths = [130, 130, 130, 130, 100, 150]
-    table = Table(data, colWidths=col_widths)
-    
-    style = TableStyle([
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 10),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('WORDWRAP', (0, 0), (-1, -1), True)
-    ])
-    table.setStyle(style)
-    
-    elements.append(table)
-    doc.build(elements)
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
 
 def admin_view():
     st.header("👥 Data View")
     
+    # Initialize session state for modify mode
+    if 'modify_mode' not in st.session_state:
+        st.session_state.modify_mode = False
+    
+    # Add custom CSS
+    st.markdown("""
+        <style>
+        .modify-button {
+            text-align: right;
+            padding: 1rem 0;
+        }
+        .record-container {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 8px;
+            margin: 4px 0;
+        }
+        .record-name { font-weight: 600; }
+        .small-button {
+            font-size: 12px !important;
+            padding: 0px 4px !important;
+            height: 25px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Search filters in a row
     col1, col2, col3 = st.columns(3)
     with col1:
         filter_block = st.selectbox("Filter by Block", ["All"] + BLOCKS, key="admin_block")
@@ -212,6 +278,15 @@ def admin_view():
     with col3:
         name_search = st.text_input("Search by Name")
 
+    # Toggle modify mode button
+    col1, col2, col3 = st.columns([3, 1, 1])
+    with col3:
+        if st.button("🔧 Modify Records" if not st.session_state.modify_mode else "🔙 Back to View",
+                    type="primary" if not st.session_state.modify_mode else "secondary"):
+            st.session_state.modify_mode = not st.session_state.modify_mode
+            st.rerun()
+
+    # Apply filters
     filters = {}
     if filter_block != "All":
         filters["block"] = filter_block
@@ -223,48 +298,62 @@ def admin_view():
     df = get_filtered_data(filters)
     
     if not df.empty:
-        st.dataframe(
-            df[['name', 'block', 'panchayat', 'designation', 'mobile_number', 'address']],
-            use_container_width=True,
-            height=400
-        )
-        
-        # Download buttons
-        col1, col2, col3 = st.columns([4, 1, 1])
-        with col2:
-            if st.button("📄 Download PDF", use_container_width=True):
-                pdf_data = export_to_pdf(df)
+        # Normal View Mode
+        if not st.session_state.modify_mode:
+            st.dataframe(
+                df[['name', 'block', 'panchayat', 'designation', 'mobile_number', 'address']],
+                use_container_width=True,
+                height=400
+            )
+            
+            # Download buttons
+            col1, col2, col3 = st.columns([4, 1, 1])
+            with col2:
+                if st.button("📄 Download PDF", use_container_width=True):
+                    pdf_data = export_to_pdf(df)
+                    st.download_button(
+                        label="Click to Download PDF",
+                        data=pdf_data,
+                        file_name="constituency_data.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+            with col3:
+                csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Click to Download PDF",
-                    data=pdf_data,
-                    file_name="constituency_data.pdf",
-                    mime="application/pdf",
+                    label="📊 Download CSV",
+                    data=csv,
+                    file_name="constituency_data.csv",
+                    mime="text/csv",
                     use_container_width=True
                 )
-        with col3:
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📊 Download CSV",
-                data=csv,
-                file_name="constituency_data.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
         
-        for idx, row in df.iterrows():
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.write(f"**{row['name']}** | {row['block']} | {row['panchayat']}")
-            with col2:
-                if st.button("✏️ Edit", key=f"edit_{row['id']}", use_container_width=True):
-                    st.session_state.editing_record = row
-                    st.session_state.current_page = 'data_entry'
-                    st.rerun()
-            with col3:
-                if st.button("🗑️ Delete", key=f"delete_{row['id']}", use_container_width=True):
-                    if delete_record(row['id']):
-                        st.success("Record deleted successfully!")
+        # Modify Mode
+        else:
+            for idx, row in df.iterrows():
+                st.markdown(f"""
+                    <div class="record-container">
+                        <div class="record-name">{row['name']}</div>
+                        <div>{row['block']} | {row['panchayat']}</div>
+                        <div>{row.get('designation', '')} {' | ' if row.get('designation') else ''}{row.get('mobile_number', '')}</div>
+                        <div>{row.get('address', '')}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("✏️ Edit", key=f"edit_{row['id']}", use_container_width=True):
+                        st.session_state.editing_record = row
+                        st.session_state.current_page = 'data_entry'
                         st.rerun()
+                with col2:
+                    if st.button("🗑️ Delete", key=f"delete_{row['id']}", use_container_width=True):
+                        if delete_record(row['id']):
+                            with st.spinner('Deleting...'):
+                                time.sleep(0.5)
+                                st.success("✅ Record deleted successfully!")
+                                time.sleep(0.5)
+                                st.rerun()
     else:
         st.info("No data available for the selected filters")
 
@@ -281,13 +370,17 @@ def main():
         st.session_state.current_page = 'data_entry'
     if 'editing_record' not in st.session_state:
         st.session_state.editing_record = None
+    if 'modify_mode' not in st.session_state:
+        st.session_state.modify_mode = False
 
     if data_entry_btn:
         st.session_state.current_page = 'data_entry'
         st.session_state.editing_record = None
+        st.session_state.modify_mode = False
     if admin_view_btn:
         st.session_state.current_page = 'admin_view'
         st.session_state.editing_record = None
+        st.session_state.modify_mode = False
 
     st.divider()
 
