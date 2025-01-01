@@ -92,10 +92,21 @@ def export_to_pdf(df):
         pagesize=landscape(letter),
         leftMargin=15,
         rightMargin=15,
-        topMargin=25,
+        topMargin=50,  # Increased for title
         bottomMargin=25
     )
     elements = []
+    
+    # Add title
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=getSampleStyleSheet()['Heading1'],
+        fontSize=16,
+        alignment=1,  # Center alignment
+        spaceAfter=30
+    )
+    title = Paragraph("<b>Mohiuddin Nagar Constituency (137)</b>", title_style)
+    elements.append(title)
     
     # Create custom styles for each column
     styles = getSampleStyleSheet()
@@ -107,11 +118,11 @@ def export_to_pdf(df):
         fontSize=9,
         leading=12,
         alignment=TA_LEFT,
-        wordWrap='CJK',  # Strict word wrap
-        splitLongWords=1  # Force split long words
+        wordWrap='CJK',
+        splitLongWords=1
     )
     
-    # Define header style
+    # Header style
     header_style = ParagraphStyle(
         'HeaderStyle',
         parent=styles['Normal'],
@@ -120,7 +131,7 @@ def export_to_pdf(df):
         fontName='Helvetica-Bold'
     )
     
-    # Define the header row
+    # Define headers
     headers = [
         Paragraph('Name', header_style),
         Paragraph('Block', header_style),
@@ -131,7 +142,7 @@ def export_to_pdf(df):
     ]
     data = [headers]
     
-    # Process data rows with strict width control
+    # Process data rows
     for _, row in df.iterrows():
         data.append([
             Paragraph(str(row['name']).strip() or '-', cell_style),
@@ -147,24 +158,15 @@ def export_to_pdf(df):
     table = Table(data, colWidths=col_widths, repeatRows=1)
     
     style = TableStyle([
-        # Grid
         ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
         ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.grey),
-        
-        # Header
         ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.2, 0.2, 0.2)),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        
-        # Padding
         ('TOPPADDING', (0, 0), (-1, -1), 8),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
         ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        
-        # Alignment
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        
-        # Row colors
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.Color(0.95, 0.95, 0.95), colors.white])
     ])
     
@@ -243,6 +245,27 @@ def data_entry_form(existing_data=None):
 def admin_view():
     st.header("👥 Data View")
     
+    # Password protection
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    
+    # Add logout button when authenticated
+    if st.session_state.authenticated:
+        if st.sidebar.button("Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
+    
+    if not st.session_state.authenticated:
+        password = st.text_input("Enter password to view data", type="password")
+        if password:
+            if password in ["221067", "210500"]:
+                st.session_state.authenticated = True
+                st.success("Access granted!")
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+        return
+        
     # Initialize session state for modify mode
     if 'modify_mode' not in st.session_state:
         st.session_state.modify_mode = False
@@ -270,13 +293,15 @@ def admin_view():
     """, unsafe_allow_html=True)
     
     # Search filters in a row
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         filter_block = st.selectbox("Filter by Block", ["All"] + BLOCKS, key="admin_block")
     with col2:
         filter_panchayat = st.selectbox("Filter by Panchayat", ["All"] + ALL_PANCHAYATS, key="admin_panchayat")
     with col3:
         name_search = st.text_input("Search by Name")
+    with col4:
+        designation_search = st.text_input("Search by Designation")
 
     # Toggle modify mode button
     col1, col2, col3 = st.columns([3, 1, 1])
@@ -294,6 +319,8 @@ def admin_view():
         filters["panchayat"] = filter_panchayat
     if name_search:
         filters["name"] = {"$regex": name_search, "$options": "i"}
+    if designation_search:
+        filters["designation"] = {"$regex": designation_search, "$options": "i"}
 
     df = get_filtered_data(filters)
     
@@ -332,7 +359,8 @@ def admin_view():
         else:
             for idx, row in df.iterrows():
                 st.markdown(f"""
-                    <div class="record-container">
+                    <div class="record-container>
+                            <div class="record-container">
                         <div class="record-name">{row['name']}</div>
                         <div>{row['block']} | {row['panchayat']}</div>
                         <div>{row.get('designation', '')} {' | ' if row.get('designation') else ''}{row.get('mobile_number', '')}</div>
